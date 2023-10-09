@@ -2,6 +2,7 @@ import axios from 'axios';
 import Notiflix from 'notiflix';
 import SimpleLightbox from "simplelightbox";
 import "simplelightbox/dist/simple-lightbox.min.css";
+import throttle  from "lodash.throttle";
 
 const API_KEY = "39914806-2f3555676b3ba657a337df35e";
 const BASE_URL = "https://pixabay.com/api/";
@@ -10,53 +11,89 @@ const searchForm = document.querySelector('.search-form');
 const gallery = document.querySelector('.gallery');
 const loadMoreBtn = document.querySelector('.load-more');
 
-searchForm.addEventListener('submit', onSearch);
-
+var simpleLightBox = new SimpleLightbox('.gallery a');
 let query = '';
 let page = 1;
-let simpleLightBox = new SimpleLightbox('.gallery');
-let allPagesLoaded = false;
-let perPage = 40;
+
+searchForm.addEventListener("input", throttle(handleInput, 500));
+searchForm.addEventListener('submit', onSearch);
+loadMoreBtn.addEventListener("click", onLoad);
+
+function handleInput(e) {
+    query = e.target.value;
+}
 
 function onSearch(e) {
     e.preventDefault();
 
     page = 1;
-    query = e.currentTarget.elements.searchQuery.value.trim();
-    allPagesLoaded = false;
     gallery.innerHTML = '';
+    loadMoreBtn.hidden = true;
+    Notiflix.Loading.remove();
 
-    fetchImages(query, page, perPage).then(data => {
-        if (data.totalHits === 0) {
+    fetchImages(query).then(({data: {hits, totalHits}})=> {
+        if (hits.length === 0 || query.trim() === "") {
             Notiflix.Notify.failure(
-                'Sorry, there are no images matching your search query. Please try again.',
-            );
+                'Sorry, there are no images matching your search query. Please try again.');
+            gallery.innerHTML = "";
+            Notiflix.Loading.remove();
         } else {
-            cardMarcup(data.hits);
-            const totalPages = Math.ceil(data.totalHits / perPage);
+            cardMarcup(hits);
+            const totalPages = Math.ceil(totalHits / 40);
 
-            if (page == totalPages) {
-                allPagesLoaded = true;
+            if (page === totalPages) {
+                loadMoreBtn.hidden = true;
+            } else {
+                loadMoreBtn.hidden = false;
             }
-            simpleLightBox.refresh();
-            Notiflix.Notify.success(`Hooray! We found ${data.totalHits} images.`);
+            Notiflix.Loading.remove();
+            Notiflix.Notify.success(`Hooray! We found ${totalHits} images.`);
         }
-    })
-    .catch(error => console.log(error))
-    .finally(() => {
-        searchForm.reset();
-    });
+    }).catch(error => console.log(error));
 }
 
-function cardMarcup(images) {
-    if (!gallery) {
-        return;
-    }
-    const markup = images.map(image => {
-        const { id, webformatURL, tags, likes, views, comments, downloads, } = image;
+function onLoad() {
+    page += 1;
+    loadMoreBtn.hidden = true;
+    Notiflix.Loading.circle('Loading...');
+
+    fetchImages(query).then(({data: {hits, totalHits}}) => {
+        cardMarcup(hits);
+        const totalPages = Math.ceil(totalHits / 40);
+        if (page === totalPages) {
+            loadMoreBtn.hidden = true;
+        } else {
+            loadMoreBtn.hidden = false;
+        }
+        Notiflix.Loading.remove();
+    }).catch(error => console.log(error));
+}
+
+async function fetchImages(query) {
+    const params = new URLSearchParams({
+        key: API_KEY,
+        q: query,
+        image_type: "photo",
+        orientation: "horizontal",
+        safesearch: true,
+        page: page,
+        per_page: 40,
+    })
+
+    const response = await axios.get(`${BASE_URL}?${params}`);
+    console.log(response);
+return response;
+}
+
+function cardMarcup(arr) {
+    const markup = arr.map(({webformatURL, largeImageURL, tags, likes, views, comments, downloads}) => {
         return `
-        <div class="photo-card" id="${id}">
-            <img src="${webformatURL}" alt="${tags}" loading="lazy" />
+        <div class="photo-card">
+            <div class="photo-wrap">
+            <a class="gallery-link" href="${largeImageURL}">
+                <img src="${webformatURL}" alt="${tags}" loading="lazy" />
+            </a> 
+            </div>  
             <div class="info">
                 <p class="info-item"><b>Likes</b>${likes}</p>
                 <p class="info-item"><b>Views</b>${views}</p>
@@ -67,59 +104,9 @@ function cardMarcup(images) {
     }).join('');
 
     gallery.insertAdjacentHTML('beforeend', markup);
+    simpleLightBox.refresh();
 }
 
-function onLoad() {
-    if (allPagesLoaded) {
-        return;
-    }
-    page += 1;
-    loadMoreBtn.hidden = true;
-    Notiflix.Loading.circle('Loading...');
 
-    fetchImages(query, page, perPage).then(data => {
-        if (data.hits.length === 0) {
-            allPagesLoaded = true;
-        } else {
-            cardMarcup(data.hits);
-            simpleLightbox.refresh();
 
-            const totalPages = Math.ceil(data.totalHits / perPage);
 
-            if (page == totalPages) {
-                allPagesLoaded = true;
-                Notiflix.Notify.failure(
-                    "We're sorry, but you've reached the end of search results.",
-                );
-            }
-        }
-    }).catch(error => console.log(error));
-}
-function checkEndOfPage() {
-    return (
-        window.innerHeight + window.scrolly >= document.documentElement.scrollHeight
-    );
-}
-function showLoadMorePage() {
-    if (checkEndOfPage()) {
-        onLoad();
-    }
-}
-
-window.addEventListener('scroll', showLoadMorePage);
-
-async function fetchImages(query) {
-    const params = new URLSearchParams({
-        key: API_KEY,
-        q: query,
-        image_type: "photo",
-        orientation: "horizontal",
-        safesearch: true,
-        page: page,
-        per_page: perPage,
-    })
-
-    const response = await axios.get(`${BASE_URL}?${params}`);
-    console.log(response);
-return response.data;
-}
